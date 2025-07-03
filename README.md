@@ -38,7 +38,7 @@ fn void handle_request(ZString request, usz length) {
 
 ## Performance
 
-Benchmark results on Ryzen 7 2700 (32GB DDR4, Windows 11 Pro, C3C Built-in Benchmark, [bench.c3](https://github.com/velikoss/zparse.c3l/blob/master/bench.c3)):
+Benchmark results on Ryzen 7 2700 (32GB DDR4, Windows 11 Pro, C3C Built-in Benchmark, -O3 flag, [bench.c3](https://github.com/velikoss/zparse.c3l/blob/master/bench.c3)):
 
 ```
 --------------- BENCHMARKS ----------------
