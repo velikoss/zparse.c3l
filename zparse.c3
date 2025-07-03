@@ -202,3 +202,8 @@ fn bool ZHttpParser.parse(ZHttpParser* self, ZString input, usz length) {
     }
     return false;
 }
+
+fn bool parse(ZHttpRequest* request, ZString input, usz length) {
+    ZHttpParser parser = (ZHttpParser) {.request = request};
+    return parser.parse(input, length);
+}

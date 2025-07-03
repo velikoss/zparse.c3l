@@ -61,11 +61,11 @@ fn void test_all() @test {
     ZHttpRequest request;
     ZHttpParser parser = (ZHttpParser) { .request = &request };
     test::@check(parser.parse(REQ1, REQ1.len()), "%s", request);
-    test::@check(parser.parse(REQ2, REQ2.len()), "%s", request);
-    test::@check(parser.parse(REQ3, REQ2.len()), "%s", request);
-    test::@check(parser.parse(REQ4, REQ2.len()), "%s", request);
-    test::@check(parser.parse(REQ5, REQ2.len()), "%s", request);
-    test::@check(parser.parse(REQ6, REQ2.len()), "%s", request);
+    test::@check(zparse::parse(&request, REQ2, REQ2.len()), "%s", request);
+    test::@check(zparse::parse(&request, REQ3, REQ2.len()), "%s", request);
+    test::@check(zparse::parse(&request, REQ4, REQ2.len()), "%s", request);
+    test::@check(zparse::parse(&request, REQ5, REQ2.len()), "%s", request);
+    test::@check(zparse::parse(&request, REQ6, REQ2.len()), "%s", request);
     return;
 }
 
@@ -91,8 +91,7 @@ fn void bench_thousand() @benchmark {
     reqs_len = {REQ1.len(), REQ2.len(), REQ3.len(), REQ4.len(), REQ5.len(), REQ6.len()};
     for (int i = 0; i < 1000; i++) {
         ZHttpRequest request;
-        ZHttpParser parser = (ZHttpParser) { .request = &request };
-        if (!parser.parse(REQS[i%6], reqs_len[i%6])) {
+        if (!zparse::parse(&request, REQS[i%6], reqs_len[i%6])) {
             io::eprintn("Error!");
         }
     }

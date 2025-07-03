@@ -1,6 +1,6 @@
 # zparse - High-performance HTTP Parser in C3
 
-Lightweight, SIMD-accelerated HTTP request parser for the C3 language.
+Lightweight, Memory-efficient, SIMD-accelerated HTTP request parser for the C3 language.
 
 ## Installation
 
@@ -23,6 +23,23 @@ import zparse;
 
 fn void handle_request(ZString request, usz length) {
     ZHttpRequest parsed_req;
+    
+    if (zparse::parse(&parsed_req, request, length)) {
+        // Request successfully parsed
+        // Access:
+        // parsed_req.method   (GET/POST/etc)
+        // parsed_req.uri      ("/path.html")
+        // parsed_req.headers  (array of name-value pairs)
+        // parsed_req.body     (for POST/PUT requests)
+    }
+}
+```
+
+or
+
+```c
+fn void handle_request(ZString request, usz length) {
+    ZHttpRequest parsed_req;
     ZHttpParser parser = { .request = &parsed_req };
     
     if (parser.parse(request, length)) {
@@ -35,6 +52,7 @@ fn void handle_request(ZString request, usz length) {
     }
 }
 ```
+
 
 ## Performance
 
@@ -79,6 +97,7 @@ struct ZHttpParser {
 ### Key Functions
 
 - `ZHttpParser.parse(ZString request, usz length)`: Parse HTTP request
+- `parse(ZHttpRequest* output, ZString request, usz length)`: Parse HTTP request
 
 ## Examples
 
