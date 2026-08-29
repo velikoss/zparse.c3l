@@ -1,10 +1,11 @@
 module bench;
 
-import zparse1;      // original zparse
-import zparseng;     // current zparse
-
 import std::io;
 import std::time::clock;
+
+import zparse1;      // original zparse
+import zparseng;     // current zparse
+import http::parser; // lsfratel/http.c3l
 
 const usz ITERS      = 2_000_000;
 const usz WARMUP     = 100_000;
@@ -26,6 +27,23 @@ const String REQ = "GET /wp-content/uploads/2010/03/hello-kitty-darth-vader-pink
 const usz EXPECT_HEADERS = 9;
 
 ulong sink;
+
+struct Ctx { usz headers; ulong sink; }
+
+fn void on_request_line(parser::Parser* p, char[] method, char[] target, char[] version, void* ud)
+{
+	Ctx* c = ud;
+	c.sink += method.len + target.len + version.len;
+}
+
+fn void on_header(parser::Parser* p, char[] name, char[] value, void* ud)
+{
+	Ctx* c = ud;
+	c.headers++;
+	c.sink += name.len + value.len;
+}
+
+fn parser::Settings full_settings() => { .on_request_line = &on_request_line, .on_header = &on_header };
 
 fn bool check(char[] buf)
 {
@@ -101,6 +119,28 @@ fn bool check(char[] buf)
 		}
 	}
 
+	// http.c3l
+	Ctx ctx;
+	parser::Settings st = full_settings();
+	parser::Parser hp;
+	hp.init(&st, &ctx);
+	usz? h = hp.execute(buf);
+	if (catch e = h)
+	{
+		io::printfn("  http.c3l FAIL: %s", e);
+		ok = false;
+	}
+	else if (h != buf.len || ctx.headers != EXPECT_HEADERS)
+	{
+		io::printfn("  http.c3l FAIL: consumed=%d/%d headers=%d", h, buf.len, ctx.headers);
+		ok = false;
+	}
+	else
+	{
+		io::printfn("  http.c3l ok   consumed=%d headers=%d", h, ctx.headers);
+	}
+
+	sink += ctx.sink;
 	return ok;
 }
 
@@ -133,6 +173,25 @@ fn double whole_zparseng(char[] buf)
 		if (try n) sink += n;
 	}
 	return (double)(long)t.mark() / (double)ITERS;
+}
+
+fn double whole_httpc3l(char[] buf)
+{
+	Ctx ctx;
+	parser::Settings st = full_settings();
+	parser::Parser p;
+	for (usz i = 0; i < WARMUP; i++) { p.init(&st, &ctx); (void)p.execute(buf); }
+
+	Clock t = clock::now();
+	for (usz i = 0; i < ITERS; i++)
+	{
+		p.init(&st, &ctx);
+		usz? n = p.execute(buf);
+		if (try n) sink += n;
+	}
+	double ns = (double)(long)t.mark() / (double)ITERS;
+	sink += ctx.sink;
+	return ns;
 }
 
 // split arrival
@@ -176,6 +235,32 @@ fn double chunked_zparseng(char[] buf, usz chunk, usz iters)
 	return (double)(long)t.mark() / (double)iters;
 }
 
+fn double chunked_httpc3l(char[] buf, usz chunk, usz iters)
+{
+	Ctx ctx;
+	parser::Settings st = full_settings();
+	parser::Parser p;
+	Clock t = clock::now();
+	for (usz i = 0; i < iters; i++)
+	{
+		p.init(&st, &ctx);
+		usz pending = 0;
+		usz off = 0;
+		while (off < buf.len)
+		{
+			usz end = off + chunk;
+			if (end > buf.len) end = buf.len;
+			char[] window = buf[off - pending .. end - 1];
+			usz? n = p.execute(window);
+			if (try n) { pending = window.len - n; sink += n; }
+			off = end;
+		}
+	}
+	double ns = (double)(long)t.mark() / (double)iters;
+	sink += ctx.sink;
+	return ns;
+}
+
 fn void log(String name, double ns, usz bytes)
 {
 	double reqs = 1_000_000_000.0 / ns;
@@ -197,15 +282,18 @@ fn int main()
 
 	io::printn("\nwhole head in one buffer:");
 	log("zparse", whole_zparse1(buf), buf.len);
-	log("zparseng", whole_zparseng(buf), buf.len);
+	log("zparseng",  whole_zparseng(buf), buf.len);
+	log("http.c3l",            whole_httpc3l(buf), buf.len);
 
 	io::printn("\n64-byte chunks:");
-	log("zparse", chunked_zparse1(buf, 64, CHUNK_ITERS / 10), buf.len);
-	log("zparseng", chunked_zparseng(buf, 64, CHUNK_ITERS), buf.len);
+	log("zparse1", chunked_zparse1(buf, 64, CHUNK_ITERS / 10), buf.len);
+	log("zparseng",   chunked_zparseng(buf, 64, CHUNK_ITERS), buf.len);
+	log("http.c3l",   chunked_httpc3l(buf, 64, CHUNK_ITERS), buf.len);
 
 	io::printn("\nbyte at a time:");
-	log("zparse", chunked_zparse1(buf, 1, SLOW_ITERS / 10), buf.len);
-	log("zparseng", chunked_zparseng(buf, 1, SLOW_ITERS), buf.len);
+	log("zparse1", chunked_zparse1(buf, 1, SLOW_ITERS / 10), buf.len);
+	log("zparseng",   chunked_zparseng(buf, 1, SLOW_ITERS), buf.len);
+	log("http.c3l",   chunked_httpc3l(buf, 1, SLOW_ITERS), buf.len);
 
 	io::printfn("\nsink=%d", sink);
 	return 0;
