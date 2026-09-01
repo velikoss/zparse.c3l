@@ -1,11 +1,11 @@
 # zparseng.c3l
 
-SIMD-accelerated, zero-allocation HTTP/1.1 request parser for [C3](https://c3-lang.org).
+SIMD-accelerated, zero-allocation HTTP/1.1 request **and response** parser for [C3](https://c3-lang.org).
 
 `zparseng` is the current generation of `zparse`.
 
-- **No allocation.** No `Allocator` anywhere in the API. The parser and the request are fixed-size values.
-- **No copying.** `uri`, header names and values are slices into the buffer you passed in.
+- **No allocation.** No `Allocator` anywhere in the API. The parser, the request and the response are fixed-size values.
+- **No copying.** `uri`, `reason`, header names and values are slices into the buffer you passed in.
 - **Linear on partial input.** A head arriving byte by byte costs the same total work as one arriving whole.
 - **No dependencies.** Standard library only.
 
@@ -64,7 +64,7 @@ fn void handle(char[] buf)
 ```
 
 `parse` returns **the number of bytes the head occupied**, so `buf[head_len..]`
-is the body.
+is the body and next request after on a pipelined connection.
 
 ### Bytes arriving over a socket
 
@@ -100,15 +100,40 @@ while (true)
 
 On a keep-alive connection, call `parser.reset()` before the next request.
 
+### Responses
+
+```c3
+ZHttpResponse resp;
+
+usz? head_len = zparseng::parse_response(&resp, (ZString)buf.ptr, buf.len);
+if (try head_len)
+{
+    // resp.status           200
+    // resp.reason           "OK"
+    // resp.version
+    // resp.headers, resp.header_count
+    // resp.content_length   -1 when absent
+    // resp.chunked
+    // resp.keep_alive
+    // resp.body_until_close read to EOF: no Content-Length and no chunked
+}
+```
+
+For streaming, `ZHttpResponseParser` mirrors `ZHttpParser`:
+
+```c3
+ZHttpResponseParser parser = { .response = &resp, .head_request = false };
+```
+
 ## Error handling
 
-`parse` returns `usz?`. Every failure is a distinct fault, so you can map it to
-a status code instead of guessing:
+`parse` and `parse_response` return `usz?`. Every failure is a distinct fault, so
+you can map it to a status code instead of guessing:
 
 | Fault | Meaning | Suggested status |
 |---|---|---|
 | `INCOMPLETE` | The head is not finished yet. Read more and call again. | - |
-| `INVALID_REQUEST` | Malformed request line, unknown method, bare LF. | 400 |
+| `INVALID_REQUEST` | Malformed request or status line, unknown method, non-numeric status code, bare LF. | 400 |
 | `INVALID_VERSION` | Not HTTP/1.0 or HTTP/1.1. | 505 |
 | `INVALID_HEADER` | No colon, empty name, whitespace before the colon, bare LF. | 400 |
 | `INVALID_CONTENT_LENGTH` | Not a number, overflows, duplicated with a different value, or combined with `chunked`. | 400 |
@@ -117,8 +142,8 @@ a status code instead of guessing:
 | `TOO_MANY_HEADERS` | More than `MAX_HEADERS` header lines. | 431 |
 | `HEAD_TOO_LARGE` | The accumulated head exceeded `MAX_HEAD_SIZE` without terminating. | 431 |
 
-`ZHttpRequest.header` returns `NOT_FOUND` when the header is absent, so you can potentially use
-`req.header("Cookie") ?? ""`.
+`ZHttpRequest.header` and `ZHttpResponse.header` return `NOT_FOUND` when the
+header is absent, so you can potentially use `req.header("Cookie") ?? ""`.
 
 ## Limits
 
@@ -139,28 +164,53 @@ struct ZHttpHeader {
 }
 
 struct ZHttpRequest {
-    HttpMethod method;        // HTTP method (GET, POST, etc)
-    String uri;               // Request URI
-    HttpVersion version;      // HTTP version
-    ZHttpHeader[MAX_HEADERS] headers;  // Header array
-    int header_count;         // Number of headers
-    String body;              // Request body (if present)
-    long content_length;   // -1 when absent
+    HttpMethod method;                 // GET, POST, ...
+    String uri;                        // "/index.html"
+    HttpVersion version;
+    ZHttpHeader[MAX_HEADERS] headers;
+    sz header_count;
+    String body;                       // when fully present in the buffer
+    long content_length;               // -1 when absent
     bool chunked;
     bool keep_alive;
 }
 
+struct ZHttpResponse {
+    HttpVersion version;
+    uint status;                       // 200
+    String reason;                     // "OK", may be empty
+    ZHttpHeader[MAX_HEADERS] headers;
+    sz header_count;
+    String body;
+    long content_length;               // -1 when absent
+    bool chunked;
+    bool keep_alive;
+    bool body_until_close;             // read to EOF
+}
+
 struct ZHttpParser {
-    ZHttpRequest* request; 
+    ZHttpRequest* request;
     HttpParseState state;
-    int header_index;
-    usz scanned;
+    sz header_index;
+    sz scanned;
+}
+
+struct ZHttpResponseParser {
+    ZHttpResponse* response;
+    HttpParseState state;
+    sz scanned;
+    bool head_request;                 // set when this answers a HEAD
 }
 
 fn usz?    parse(ZHttpRequest* request, ZString input, usz length);
 fn usz?    ZHttpParser.parse(&self, ZString input, usz length);
 fn void    ZHttpParser.reset(&self);
 fn String? ZHttpRequest.header(&self, String name);
+
+fn usz?    parse_response(ZHttpResponse* response, ZString input, usz length, bool head_request = false);
+fn usz?    ZHttpResponseParser.parse(&self, ZString input, usz length);
+fn void    ZHttpResponseParser.reset(&self);
+fn String? ZHttpResponse.header(&self, String name);
 ```
 
 All strings borrow from `input`. They are valid only while that buffer is alive
@@ -189,6 +239,14 @@ c3c compile-run -O3 --single-module=no bench.c3 zparse1.c3 zparseng.c3
 ```
 
 To include http.c3l into benchmark results use ([this](https://github.com/velikoss/zparse.c3l/blob/master/bench_httpc3l))
+
+## What it does not do
+
+- **Chunked bodies are detected, not decoded.** `chunked` tells you the framing;
+  decoding the chunk stream is the caller's job.
+- **No timeout.** Linear parsing bounds CPU work, not wall time. A client
+  holding a connection open sending one byte a minute is a problem for your
+  accept loop, not the parser.
 
 ## License
 
