@@ -1,5 +1,6 @@
 {
   "provides" : "zparse",
+  "sources" : [ "zparseng.c3" ],
   "targets" : {
     "freebsd-x64" : {"link-args" : [], "dependencies" : [], "linked-libraries" : []},
     "linux-aarch64" : {"link-args" : [], "dependencies" : [], "linked-libraries" : []},
